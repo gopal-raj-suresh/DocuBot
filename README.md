@@ -18,6 +18,7 @@ AI-powered documentation generation using multi-provider LLMs and specialized mi
 - [Project Structure](#project-structure)
 - [Usage Guide](#usage-guide)
 - [LLM Provider Configuration](#llm-provider-configuration)
+- [Performance Benchmarks](#performance-benchmarks)
 - [Environment Variables](#environment-variables)
 - [Technology Stack](#technology-stack)
 - [Troubleshooting](#troubleshooting)
@@ -570,13 +571,6 @@ The following benchmarks were collected by running DocuBot's full 9-agent docume
 | Enterprise Inference / SLM · [Intel OPEA EI](https://opea.dev) | Qwen3-4B-Instruct-2507 | CPU (Xeon) | 8.1K | 4,211.9 | 270 | 4481 | 10,540 | 32,205 | 0.076 | CPU-only |
 | OpenAI (Cloud) | gpt-4o-mini | API (Cloud) | 128K | 3,820.11 | 316.41 | 4136.52 | 7,760 | 23,535 | 0.108 | N/A |
 
-### Key Findings
-
-- **Cloud leads on speed**: gpt-4o-mini delivers 26% faster P50 latency (7,760ms vs 10,540ms on Xeon) and 42% higher throughput (0.108 vs 0.076 req/sec) compared to CPU-only Qwen3-4B — cloud GPUs eliminate hardware bottlenecks for latency-sensitive pipelines.
-- **Context window gap critically impacts multi-agent workflows**: Cloud's 128K vs Xeon's 8.1K (94% reduction) forces aggressive prompt truncation for code documentation tasks, while vLLM's 262.1K on Apple Silicon enables full-context processing without chunking strategies.
-- **Cloud generates more with less input**: gpt-4o-mini produces 17% more output (316 vs 270 tokens) while consuming 9% less input (3,820 vs 4,212), indicating superior prompt compression and generation efficiency.
-- **Apple Silicon throughput lags despite large context**: Despite a 32× larger context window (262.1K vs 8.1K), Apple Silicon achieves only 0.058 req/sec — 46% slower than cloud and 24% slower than CPU-only Xeon — suggesting Metal optimization gaps for multi-agent workloads.
-- **Deployment stability affects cost predictability**: Cloud shows 26% token variance per run (3,618–4,915 tokens/req) vs Xeon's 7% variance (4,375–4,688), reflecting dynamic resource allocation versus consistent CPU-bound processing.
 
 ### Model Capabilities
 
