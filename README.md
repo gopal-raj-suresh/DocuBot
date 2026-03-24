@@ -4,7 +4,8 @@
 
 # 📚 DocuBot - AI Documentation Generator
 
-An AI-powered full-stack application that automatically generates high-quality project documentation from source code repositories. Connect a GitHub repo, let specialized micro-agents analyze the codebase, architecture, dependencies, and APIs, and get structured README documentation in minutes, powered by multi-provider LLMs, OpenAI-compatible endpoints, or locally hosted models such as Ollama.
+An AI-powered full-stack application that generates high-quality project documentation from source code repositories. Connect a GitHub repo, let specialized micro-agents analyze the codebase, architecture, dependencies, and APIs, and get structured README documentation in minutes, powered by multi-provider LLMs, OpenAI-compatible endpoints, or locally hosted models such as Ollama.
+
 ---
 
 ## 📋 Table of Contents
