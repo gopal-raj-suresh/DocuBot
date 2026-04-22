@@ -1,0 +1,61 @@
+name: Notify Google Chat on Dependabot PR
+
+on:
+  pull_request_target:
+    types: [opened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  notify:
+    name: Post Dependabot PR to Google Chat
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Send Google Chat card
+        env:
+          WEBHOOK_URL: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
+          SEVERITY: ${{ steps.meta.outputs.cvss || 'N/A' }}
+          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+          DEP_NAMES: ${{ steps.meta.outputs.dependency-names }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          REPO: ${{ github.repository }}
+        run: |
+          cat > payload.json <<EOF
+          {
+            "cardsV2": [{
+              "cardId": "dependabot-$(date +%s)",
+              "card": {
+                "header": {
+                  "title": "Dependabot Update",
+                  "subtitle": "${REPO}",
+                  "imageUrl": "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png",
+                  "imageType": "CIRCLE"
+                },
+                "sections": [{
+                  "widgets": [
+                    {"decoratedText": {"topLabel": "PR Title",    "text": "${PR_TITLE}"}},
+                    {"decoratedText": {"topLabel": "Package(s)",  "text": "${DEP_NAMES}"}},
+                    {"decoratedText": {"topLabel": "Update Type", "text": "${UPDATE_TYPE}"}},
+                    {"decoratedText": {"topLabel": "CVSS Score",  "text": "${SEVERITY}"}},
+                    {"buttonList": {"buttons": [
+                      {"text": "View PR", "onClick": {"openLink": {"url": "${PR_URL}"}}}
+                    ]}}
+                  ]
+                }]
+              }
+            }]
+          }
+          EOF
+          curl -sS -X POST "$WEBHOOK_URL" \
+            -H "Content-Type: application/json; charset=UTF-8" \
+            -d @payload.json
