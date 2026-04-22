@@ -18,7 +18,7 @@ An AI-powered full-stack application that generates high-quality project documen
 - [Project Structure](#project-structure)
 - [Usage Guide](#usage-guide)
 - [LLM Provider Configuration](#llm-provider-configuration)
-- [Inference Benchmarks](#inference-benchmarks)
+- [Inference Metrics](#inference-metrics)
 - [Model Capabilities](#model-capabilities)
 - [Environment Variables](#environment-variables)
 - [Technology Stack](#technology-stack)
@@ -573,7 +573,7 @@ docker compose up -d
 
 ---
 
-## Inference Benchmarks
+## Inference Metrics
 
 The table below compares inference performance across different providers, deployment modes, and hardware profiles using a standardized DocuBot's full 9-agent documentation pipeline.
 
@@ -585,7 +585,7 @@ The table below compares inference performance across different providers, deplo
 
 > **Notes:**
 >
-> - All benchmarks use the same Documentation generation workflow. Token counts may vary slightly per run due to non-deterministic model output.
+> - All metrics use the same Documentation generation workflow. Token counts may vary slightly per run due to non-deterministic model output.
 > - vLLM on Apple Silicon uses Metal (MPS) GPU acceleration.
 > - [Intel OPEA Enterprise Inference](https://github.com/opea-project/Enterprise-Inference) runs on Intel Xeon CPUs without GPU acceleration.
 
