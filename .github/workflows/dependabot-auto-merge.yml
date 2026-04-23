@@ -18,10 +18,43 @@ jobs:
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
 
+      - name: Classify update type
+        id: classify
+        env:
+          FM_UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          UPDATE_TYPE="${FM_UPDATE_TYPE}"
+
+          if [[ -z "$UPDATE_TYPE" || "$UPDATE_TYPE" == "null" ]]; then
+            if [[ "$PR_TITLE" =~ ([0-9]+)\.([0-9]+)\.([0-9]+).*to.*([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+              OLD_MAJOR="${BASH_REMATCH[1]}"
+              OLD_MINOR="${BASH_REMATCH[2]}"
+              OLD_PATCH="${BASH_REMATCH[3]}"
+              NEW_MAJOR="${BASH_REMATCH[4]}"
+              NEW_MINOR="${BASH_REMATCH[5]}"
+              NEW_PATCH="${BASH_REMATCH[6]}"
+
+              if [[ "$OLD_MAJOR" != "$NEW_MAJOR" ]]; then
+                UPDATE_TYPE="version-update:semver-major"
+              elif [[ "$OLD_MINOR" != "$NEW_MINOR" ]]; then
+                UPDATE_TYPE="version-update:semver-minor"
+              elif [[ "$OLD_PATCH" != "$NEW_PATCH" ]]; then
+                UPDATE_TYPE="version-update:semver-patch"
+              else
+                UPDATE_TYPE="unknown"
+              fi
+            else
+              UPDATE_TYPE="unknown"
+            fi
+          fi
+
+          echo "update-type=$UPDATE_TYPE" >> "$GITHUB_OUTPUT"
+
       - name: Enable auto-merge for minor and patch updates
         if: |
-          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
-          steps.metadata.outputs.update-type == 'version-update:semver-minor'
+          steps.classify.outputs.update-type == 'version-update:semver-patch' ||
+          steps.classify.outputs.update-type == 'version-update:semver-minor'
         run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
