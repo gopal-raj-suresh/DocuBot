@@ -3,6 +3,8 @@ name: Notify Google Chat on Dependabot Events
 on:
   pull_request_target:
     types: [opened, closed]
+  pull_request:
+    types: [closed]
 
 permissions:
   contents: read
@@ -57,57 +59,99 @@ jobs:
             EVENT="merged"
           fi
 
+          # Friendly update-type label
+          case "$UPDATE_TYPE" in
+            version-update:semver-patch) UPDATE_LABEL="patch update";;
+            version-update:semver-minor) UPDATE_LABEL="minor update";;
+            version-update:semver-major) UPDATE_LABEL="MAJOR version";;
+            *) UPDATE_LABEL="update";;
+          esac
+
           echo "event=$EVENT" >> "$GITHUB_OUTPUT"
           echo "update-type=$UPDATE_TYPE" >> "$GITHUB_OUTPUT"
+          echo "update-label=$UPDATE_LABEL" >> "$GITHUB_OUTPUT"
 
       - name: Send Google Chat card (threaded per repo)
         if: steps.classify.outputs.event != 'skip'
         env:
           WEBHOOK_URL: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
           EVENT: ${{ steps.classify.outputs.event }}
-          UPDATE_TYPE: ${{ steps.classify.outputs.update-type }}
+          UPDATE_LABEL: ${{ steps.classify.outputs.update-label }}
           DEP_NAMES: ${{ steps.meta.outputs.dependency-names }}
           ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
           DIRECTORY: ${{ steps.meta.outputs.directory }}
           PREVIOUS_VERSION: ${{ steps.meta.outputs.previous-version }}
           NEW_VERSION: ${{ steps.meta.outputs.new-version }}
-          CVSS: ${{ steps.meta.outputs.cvss || '0' }}
           DEP_GROUP: ${{ steps.meta.outputs.dependency-group }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
           REPO: ${{ github.repository }}
           MERGED_BY: ${{ github.event.pull_request.merged_by.login }}
         run: |
+          # Friendly ecosystem name
+          case "$ECOSYSTEM" in
+            npm_and_yarn) ECO_LABEL="npm";;
+            pip) ECO_LABEL="pip";;
+            github_actions) ECO_LABEL="GitHub Actions";;
+            docker) ECO_LABEL="Docker";;
+            *) ECO_LABEL="$ECOSYSTEM";;
+          esac
+
+          LOCATION="${ECO_LABEL}"
+          if [[ -n "$DIRECTORY" && "$DIRECTORY" != "/" ]]; then
+            LOCATION="${ECO_LABEL} (${DIRECTORY})"
+          fi
+
+          # Version change text
+          if [[ -n "$PREVIOUS_VERSION" && -n "$NEW_VERSION" ]]; then
+            VERSION_TEXT="${PREVIOUS_VERSION} → ${NEW_VERSION}"
+          else
+            VERSION_TEXT="see PR for versions"
+          fi
+
+          # Package summary — single vs group
+          if [[ -n "$DEP_GROUP" ]]; then
+            PKG_COUNT=$(echo "$DEP_NAMES" | tr ',' '\n' | wc -l | tr -d ' ')
+            PKG_SUMMARY="${DEP_GROUP} group (${PKG_COUNT} packages)"
+          else
+            PKG_SUMMARY="${DEP_NAMES}"
+          fi
+
           case "$EVENT" in
             opened_minor_patch)
-              TITLE="Dependabot PR opened — auto-merge enabled"
-              STATUS_TEXT="Auto-merge enabled. Will merge once CI passes."
-              STATUS_LABEL="Status"
-              ACTION_BUTTON_TEXT="View PR"
+              HEADER_EMOJI="✅"
+              HEADER_TITLE="Safe update — auto-merging after CI"
+              DETAIL_LABEL="Change"
+              DETAIL_TEXT="${PKG_SUMMARY} in ${LOCATION}<br>Bumping ${VERSION_TEXT} (${UPDATE_LABEL})"
+              NEXT_LABEL="Next step"
+              NEXT_TEXT="No action needed from you."
+              BUTTON_TEXT="View PR"
               ;;
             opened_major)
-              TITLE="MAJOR version bump — human review required"
-              STATUS_TEXT="This is a MAJOR version upgrade and may contain breaking changes. Please review and merge manually if safe."
-              STATUS_LABEL="Action Required"
-              ACTION_BUTTON_TEXT="Review PR"
+              HEADER_EMOJI="⚠️"
+              HEADER_TITLE="Major update — please review"
+              DETAIL_LABEL="Change"
+              DETAIL_TEXT="${PKG_SUMMARY} in ${LOCATION}<br>Bumping ${VERSION_TEXT} — <b>may include breaking changes</b>"
+              NEXT_LABEL="Action required"
+              NEXT_TEXT="Someone from the team, please review the PR and merge if safe."
+              BUTTON_TEXT="Review PR"
               ;;
             merged)
-              TITLE="Dependabot PR merged"
-              STATUS_TEXT="Merged into default branch${MERGED_BY:+ by ${MERGED_BY}}."
-              STATUS_LABEL="Status"
-              ACTION_BUTTON_TEXT="View PR"
+              HEADER_EMOJI="🚀"
+              HEADER_TITLE="Merged into main"
+              DETAIL_LABEL="Change"
+              DETAIL_TEXT="${PKG_SUMMARY} in ${LOCATION}<br>${VERSION_TEXT}"
+              NEXT_LABEL="Status"
+              if [[ -n "$MERGED_BY" && "$MERGED_BY" != "null" ]]; then
+                NEXT_TEXT="Merged by ${MERGED_BY}."
+              else
+                NEXT_TEXT="Merged automatically after CI passed."
+              fi
+              BUTTON_TEXT="View PR"
               ;;
           esac
 
-          SUBTITLE="${REPO} · #${PR_NUMBER}"
-          VERSION_TEXT="${PREVIOUS_VERSION:-?} → ${NEW_VERSION:-?}"
-          [[ "$VERSION_TEXT" == "? → ?" ]] && VERSION_TEXT="see PR for versions"
-
-          GROUP_LINE=""
-          if [[ -n "$DEP_GROUP" ]]; then
-            GROUP_LINE=",{\"decoratedText\": {\"topLabel\": \"Group\", \"text\": \"${DEP_GROUP}\"}}"
-          fi
+          SUBTITLE="${REPO} · PR #${PR_NUMBER}"
 
           THREAD_KEY=$(echo "${REPO}" | tr '[:upper:]' '[:lower:]' | tr '/' '-')
           THREADED_URL="${WEBHOOK_URL}&threadKey=${THREAD_KEY}&messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
@@ -118,22 +162,17 @@ jobs:
               "cardId": "dependabot-${EVENT}-$(date +%s)",
               "card": {
                 "header": {
-                  "title": "${TITLE}",
+                  "title": "${HEADER_EMOJI} ${HEADER_TITLE}",
                   "subtitle": "${SUBTITLE}",
                   "imageUrl": "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png",
                   "imageType": "CIRCLE"
                 },
                 "sections": [{
                   "widgets": [
-                    {"decoratedText": {"topLabel": "${STATUS_LABEL}", "text": "${STATUS_TEXT}", "wrapText": true}},
-                    {"decoratedText": {"topLabel": "PR Title", "text": "${PR_TITLE}", "wrapText": true}},
-                    {"decoratedText": {"topLabel": "Package(s)", "text": "${DEP_NAMES}", "wrapText": true}},
-                    {"decoratedText": {"topLabel": "Version", "text": "${VERSION_TEXT}"}},
-                    {"decoratedText": {"topLabel": "Update Type", "text": "${UPDATE_TYPE}"}},
-                    {"decoratedText": {"topLabel": "Ecosystem", "text": "${ECOSYSTEM} (${DIRECTORY})"}}${GROUP_LINE},
-                    {"decoratedText": {"topLabel": "CVSS Score", "text": "${CVSS}"}},
+                    {"decoratedText": {"topLabel": "${DETAIL_LABEL}", "text": "${DETAIL_TEXT}", "wrapText": true}},
+                    {"decoratedText": {"topLabel": "${NEXT_LABEL}", "text": "${NEXT_TEXT}", "wrapText": true}},
                     {"buttonList": {"buttons": [
-                      {"text": "${ACTION_BUTTON_TEXT}", "onClick": {"openLink": {"url": "${PR_URL}"}}}
+                      {"text": "${BUTTON_TEXT}", "onClick": {"openLink": {"url": "${PR_URL}"}}}
                     ]}}
                   ]
                 }]
