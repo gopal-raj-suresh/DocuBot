@@ -5,7 +5,7 @@ python-multipart>=0.0.26
 sse-starlette>=1.6.5
 
 # Environment & Config
-python-dotenv>=1.0.0
+python-dotenv>=1.2.2
 pydantic>=2.5.0
 pydantic-settings>=2.14.0
 
