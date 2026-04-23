@@ -1,6 +1,6 @@
 # Web Framework
 fastapi>=0.136.1
-uvicorn[standard]>=0.27.0
+uvicorn[standard]>=0.46.0
 python-multipart>=0.0.26
 sse-starlette>=1.6.5
 
