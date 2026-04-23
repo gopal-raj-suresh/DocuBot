@@ -6,7 +6,7 @@ sse-starlette>=1.6.5
 
 # Environment & Config
 python-dotenv>=1.2.2
-pydantic>=2.5.0
+pydantic>=2.13.3
 pydantic-settings>=2.14.0
 
 # LangChain & LangGraph (Agentic Framework)
