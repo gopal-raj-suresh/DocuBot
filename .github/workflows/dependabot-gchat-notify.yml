@@ -1,8 +1,8 @@
-name: Notify Google Chat on Dependabot PR
+name: Notify Google Chat on Dependabot Events
 
 on:
   pull_request_target:
-    types: [opened]
+    types: [opened, closed]
 
 permissions:
   contents: read
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   notify:
-    name: Post Dependabot PR to Google Chat
+    name: Post Dependabot event to Google Chat
     runs-on: ubuntu-latest
     if: github.actor == 'dependabot[bot]'
     steps:
@@ -20,35 +20,98 @@ jobs:
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
 
+      - name: Classify event
+        id: classify
+        run: |
+          EVENT="unknown"
+          if [[ "${{ github.event.action }}" == "opened" ]]; then
+            if [[ "${{ steps.meta.outputs.update-type }}" == "version-update:semver-major" ]]; then
+              EVENT="opened_major"
+            else
+              EVENT="opened_minor_patch"
+            fi
+          elif [[ "${{ github.event.action }}" == "closed" && "${{ github.event.pull_request.merged }}" == "true" ]]; then
+            EVENT="merged"
+          else
+            echo "Not a tracked event. Skipping notification."
+            echo "event=skip" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "event=$EVENT" >> "$GITHUB_OUTPUT"
+
       - name: Send Google Chat card
+        if: steps.classify.outputs.event != 'skip'
         env:
           WEBHOOK_URL: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
-          SEVERITY: ${{ steps.meta.outputs.cvss || 'N/A' }}
+          EVENT: ${{ steps.classify.outputs.event }}
           UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
           DEP_NAMES: ${{ steps.meta.outputs.dependency-names }}
+          ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
+          DIRECTORY: ${{ steps.meta.outputs.directory }}
+          PREVIOUS_VERSION: ${{ steps.meta.outputs.previous-version }}
+          NEW_VERSION: ${{ steps.meta.outputs.new-version }}
+          CVSS: ${{ steps.meta.outputs.cvss || '0' }}
+          DEP_GROUP: ${{ steps.meta.outputs.dependency-group }}
           PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           REPO: ${{ github.repository }}
+          MERGED_BY: ${{ github.event.pull_request.merged_by.login }}
         run: |
+          case "$EVENT" in
+            opened_minor_patch)
+              TITLE="Dependabot PR opened — auto-merge enabled"
+              SUBTITLE="${REPO} · #${PR_NUMBER}"
+              STATUS_TEXT="Auto-merge enabled. Will merge once CI passes."
+              STATUS_LABEL="Status"
+              ACTION_BUTTON_TEXT="View PR"
+              ;;
+            opened_major)
+              TITLE="MAJOR version bump — human review required"
+              SUBTITLE="${REPO} · #${PR_NUMBER}"
+              STATUS_TEXT="This is a MAJOR version upgrade and may contain breaking changes. Please review and merge manually if safe."
+              STATUS_LABEL="Action Required"
+              ACTION_BUTTON_TEXT="Review PR"
+              ;;
+            merged)
+              TITLE="Dependabot PR merged"
+              SUBTITLE="${REPO} · #${PR_NUMBER}"
+              STATUS_TEXT="Merged into default branch${MERGED_BY:+ by ${MERGED_BY}}."
+              STATUS_LABEL="Status"
+              ACTION_BUTTON_TEXT="View PR"
+              ;;
+          esac
+
+          VERSION_TEXT="${PREVIOUS_VERSION:-?} → ${NEW_VERSION:-?}"
+          [[ "$VERSION_TEXT" == "? → ?" ]] && VERSION_TEXT="see PR for versions"
+
+          GROUP_LINE=""
+          if [[ -n "$DEP_GROUP" ]]; then
+            GROUP_LINE=",{\"decoratedText\": {\"topLabel\": \"Group\", \"text\": \"${DEP_GROUP}\"}}"
+          fi
+
           cat > payload.json <<EOF
           {
             "cardsV2": [{
-              "cardId": "dependabot-$(date +%s)",
+              "cardId": "dependabot-${EVENT}-$(date +%s)",
               "card": {
                 "header": {
-                  "title": "Dependabot Update",
-                  "subtitle": "${REPO}",
+                  "title": "${TITLE}",
+                  "subtitle": "${SUBTITLE}",
                   "imageUrl": "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png",
                   "imageType": "CIRCLE"
                 },
                 "sections": [{
                   "widgets": [
-                    {"decoratedText": {"topLabel": "PR Title",    "text": "${PR_TITLE}"}},
-                    {"decoratedText": {"topLabel": "Package(s)",  "text": "${DEP_NAMES}"}},
+                    {"decoratedText": {"topLabel": "${STATUS_LABEL}", "text": "${STATUS_TEXT}", "wrapText": true}},
+                    {"decoratedText": {"topLabel": "PR Title", "text": "${PR_TITLE}", "wrapText": true}},
+                    {"decoratedText": {"topLabel": "Package(s)", "text": "${DEP_NAMES}", "wrapText": true}},
+                    {"decoratedText": {"topLabel": "Version", "text": "${VERSION_TEXT}"}},
                     {"decoratedText": {"topLabel": "Update Type", "text": "${UPDATE_TYPE}"}},
-                    {"decoratedText": {"topLabel": "CVSS Score",  "text": "${SEVERITY}"}},
+                    {"decoratedText": {"topLabel": "Ecosystem", "text": "${ECOSYSTEM} (${DIRECTORY})"}}${GROUP_LINE},
+                    {"decoratedText": {"topLabel": "CVSS Score", "text": "${CVSS}"}},
                     {"buttonList": {"buttons": [
-                      {"text": "View PR", "onClick": {"openLink": {"url": "${PR_URL}"}}}
+                      {"text": "${ACTION_BUTTON_TEXT}", "onClick": {"openLink": {"url": "${PR_URL}"}}}
                     ]}}
                   ]
                 }]
