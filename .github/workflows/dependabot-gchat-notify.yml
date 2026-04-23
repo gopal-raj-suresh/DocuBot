@@ -20,31 +20,52 @@ jobs:
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
 
-      - name: Classify event
+      - name: Classify event and update type
         id: classify
+        env:
+          FM_UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          ACTION: ${{ github.event.action }}
+          MERGED: ${{ github.event.pull_request.merged }}
         run: |
-          EVENT="unknown"
-          if [[ "${{ github.event.action }}" == "opened" ]]; then
-            if [[ "${{ steps.meta.outputs.update-type }}" == "version-update:semver-major" ]]; then
+          UPDATE_TYPE="${FM_UPDATE_TYPE}"
+
+          if [[ -z "$UPDATE_TYPE" || "$UPDATE_TYPE" == "null" ]]; then
+            if [[ "$PR_TITLE" =~ ([0-9]+)\.([0-9]+)\.([0-9]+).*to.*([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+              OLD_MAJOR="${BASH_REMATCH[1]}"; OLD_MINOR="${BASH_REMATCH[2]}"
+              NEW_MAJOR="${BASH_REMATCH[4]}"; NEW_MINOR="${BASH_REMATCH[5]}"
+              if [[ "$OLD_MAJOR" != "$NEW_MAJOR" ]]; then
+                UPDATE_TYPE="version-update:semver-major"
+              elif [[ "$OLD_MINOR" != "$NEW_MINOR" ]]; then
+                UPDATE_TYPE="version-update:semver-minor"
+              else
+                UPDATE_TYPE="version-update:semver-patch"
+              fi
+            else
+              UPDATE_TYPE="unknown"
+            fi
+          fi
+
+          EVENT="skip"
+          if [[ "$ACTION" == "opened" ]]; then
+            if [[ "$UPDATE_TYPE" == "version-update:semver-major" ]]; then
               EVENT="opened_major"
             else
               EVENT="opened_minor_patch"
             fi
-          elif [[ "${{ github.event.action }}" == "closed" && "${{ github.event.pull_request.merged }}" == "true" ]]; then
+          elif [[ "$ACTION" == "closed" && "$MERGED" == "true" ]]; then
             EVENT="merged"
-          else
-            echo "Not a tracked event. Skipping notification."
-            echo "event=skip" >> "$GITHUB_OUTPUT"
-            exit 0
           fi
-          echo "event=$EVENT" >> "$GITHUB_OUTPUT"
 
-      - name: Send Google Chat card
+          echo "event=$EVENT" >> "$GITHUB_OUTPUT"
+          echo "update-type=$UPDATE_TYPE" >> "$GITHUB_OUTPUT"
+
+      - name: Send Google Chat card (threaded per repo)
         if: steps.classify.outputs.event != 'skip'
         env:
           WEBHOOK_URL: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
           EVENT: ${{ steps.classify.outputs.event }}
-          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+          UPDATE_TYPE: ${{ steps.classify.outputs.update-type }}
           DEP_NAMES: ${{ steps.meta.outputs.dependency-names }}
           ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
           DIRECTORY: ${{ steps.meta.outputs.directory }}
@@ -61,27 +82,25 @@ jobs:
           case "$EVENT" in
             opened_minor_patch)
               TITLE="Dependabot PR opened — auto-merge enabled"
-              SUBTITLE="${REPO} · #${PR_NUMBER}"
               STATUS_TEXT="Auto-merge enabled. Will merge once CI passes."
               STATUS_LABEL="Status"
               ACTION_BUTTON_TEXT="View PR"
               ;;
             opened_major)
               TITLE="MAJOR version bump — human review required"
-              SUBTITLE="${REPO} · #${PR_NUMBER}"
               STATUS_TEXT="This is a MAJOR version upgrade and may contain breaking changes. Please review and merge manually if safe."
               STATUS_LABEL="Action Required"
               ACTION_BUTTON_TEXT="Review PR"
               ;;
             merged)
               TITLE="Dependabot PR merged"
-              SUBTITLE="${REPO} · #${PR_NUMBER}"
               STATUS_TEXT="Merged into default branch${MERGED_BY:+ by ${MERGED_BY}}."
               STATUS_LABEL="Status"
               ACTION_BUTTON_TEXT="View PR"
               ;;
           esac
 
+          SUBTITLE="${REPO} · #${PR_NUMBER}"
           VERSION_TEXT="${PREVIOUS_VERSION:-?} → ${NEW_VERSION:-?}"
           [[ "$VERSION_TEXT" == "? → ?" ]] && VERSION_TEXT="see PR for versions"
 
@@ -89,6 +108,9 @@ jobs:
           if [[ -n "$DEP_GROUP" ]]; then
             GROUP_LINE=",{\"decoratedText\": {\"topLabel\": \"Group\", \"text\": \"${DEP_GROUP}\"}}"
           fi
+
+          THREAD_KEY=$(echo "${REPO}" | tr '[:upper:]' '[:lower:]' | tr '/' '-')
+          THREADED_URL="${WEBHOOK_URL}&threadKey=${THREAD_KEY}&messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
 
           cat > payload.json <<EOF
           {
@@ -119,6 +141,6 @@ jobs:
             }]
           }
           EOF
-          curl -sS -X POST "$WEBHOOK_URL" \
+          curl -sS -X POST "$THREADED_URL" \
             -H "Content-Type: application/json; charset=UTF-8" \
             -d @payload.json
