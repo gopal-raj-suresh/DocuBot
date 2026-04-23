@@ -57,11 +57,10 @@ jobs:
             EVENT="merged"
           fi
 
-          # Friendly update-type label
           case "$UPDATE_TYPE" in
             version-update:semver-patch) UPDATE_LABEL="patch update";;
             version-update:semver-minor) UPDATE_LABEL="minor update";;
-            version-update:semver-major) UPDATE_LABEL="MAJOR version";;
+            version-update:semver-major) UPDATE_LABEL="major update (may contain breaking changes)";;
             *) UPDATE_LABEL="update";;
           esac
 
@@ -81,12 +80,13 @@ jobs:
           PREVIOUS_VERSION: ${{ steps.meta.outputs.previous-version }}
           NEW_VERSION: ${{ steps.meta.outputs.new-version }}
           DEP_GROUP: ${{ steps.meta.outputs.dependency-group }}
+          CVSS: ${{ steps.meta.outputs.cvss || '0' }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
           REPO: ${{ github.repository }}
           MERGED_BY: ${{ github.event.pull_request.merged_by.login }}
         run: |
-          # Friendly ecosystem name
           case "$ECOSYSTEM" in
             npm_and_yarn) ECO_LABEL="npm";;
             pip) ECO_LABEL="pip";;
@@ -95,19 +95,17 @@ jobs:
             *) ECO_LABEL="$ECOSYSTEM";;
           esac
 
-          LOCATION="${ECO_LABEL}"
+          ECO_DISPLAY="${ECO_LABEL}"
           if [[ -n "$DIRECTORY" && "$DIRECTORY" != "/" ]]; then
-            LOCATION="${ECO_LABEL} (${DIRECTORY})"
+            ECO_DISPLAY="${ECO_LABEL} (${DIRECTORY})"
           fi
 
-          # Version change text
           if [[ -n "$PREVIOUS_VERSION" && -n "$NEW_VERSION" ]]; then
-            VERSION_TEXT="${PREVIOUS_VERSION} → ${NEW_VERSION}"
+            VERSION_TEXT="${PREVIOUS_VERSION} -> ${NEW_VERSION}"
           else
             VERSION_TEXT="see PR for versions"
           fi
 
-          # Package summary — single vs group
           if [[ -n "$DEP_GROUP" ]]; then
             PKG_COUNT=$(echo "$DEP_NAMES" | tr ',' '\n' | wc -l | tr -d ' ')
             PKG_SUMMARY="${DEP_GROUP} group (${PKG_COUNT} packages)"
@@ -117,58 +115,58 @@ jobs:
 
           case "$EVENT" in
             opened_minor_patch)
-              HEADER_EMOJI="✅"
-              HEADER_TITLE="Safe update — auto-merging after CI"
-              DETAIL_LABEL="Change"
-              DETAIL_TEXT="${PKG_SUMMARY} in ${LOCATION}<br>Bumping ${VERSION_TEXT} (${UPDATE_LABEL})"
-              NEXT_LABEL="Next step"
-              NEXT_TEXT="No action needed from you."
+              HEADER_TITLE="✅ Safe update - auto-merging after CI"
+              STATUS_LABEL="Action Required"
+              STATUS_TEXT="No action needed. Auto-merge enabled; will merge once CI passes."
               BUTTON_TEXT="View PR"
               ;;
             opened_major)
-              HEADER_EMOJI="⚠️"
-              HEADER_TITLE="Major update — please review"
-              DETAIL_LABEL="Change"
-              DETAIL_TEXT="${PKG_SUMMARY} in ${LOCATION}<br>Bumping ${VERSION_TEXT} — <b>may include breaking changes</b>"
-              NEXT_LABEL="Action required"
-              NEXT_TEXT="Someone from the team, please review the PR and merge if safe."
+              HEADER_TITLE="⚠️ MAJOR version bump - human review required"
+              STATUS_LABEL="Action Required"
+              STATUS_TEXT="This is a MAJOR version upgrade and may contain breaking changes. Please review and merge manually if safe."
               BUTTON_TEXT="Review PR"
               ;;
             merged)
-              HEADER_EMOJI="🚀"
-              HEADER_TITLE="Merged into main"
-              DETAIL_LABEL="Change"
-              DETAIL_TEXT="${PKG_SUMMARY} in ${LOCATION}<br>${VERSION_TEXT}"
-              NEXT_LABEL="Status"
+              HEADER_TITLE="🚀 Merged into main"
+              STATUS_LABEL="Merged By"
               if [[ -n "$MERGED_BY" && "$MERGED_BY" != "null" ]]; then
-                NEXT_TEXT="Merged by ${MERGED_BY}."
+                STATUS_TEXT="${MERGED_BY}"
               else
-                NEXT_TEXT="Merged automatically after CI passed."
+                STATUS_TEXT="dependabot[bot] (auto-merge)"
               fi
               BUTTON_TEXT="View PR"
               ;;
           esac
 
-          SUBTITLE="${REPO} · PR #${PR_NUMBER}"
+          SUBTITLE="${REPO} - PR #${PR_NUMBER}"
+
+          CVSS_LINE=""
+          if [[ -n "$CVSS" && "$CVSS" != "0" && "$CVSS" != "0.0" ]]; then
+            CVSS_LINE=",{\"decoratedText\": {\"topLabel\": \"CVSS Score (Common Vulnerability Scoring System, 0 to 10 scale)\", \"text\": \"${CVSS}\"}}"
+          fi
 
           THREAD_KEY=$(echo "${REPO}" | tr '[:upper:]' '[:lower:]' | tr '/' '-')
           THREADED_URL="${WEBHOOK_URL}&threadKey=${THREAD_KEY}&messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
 
-          cat > payload.json <<EOF
+          cat > payload.json <<PAYLOAD_END
           {
             "cardsV2": [{
               "cardId": "dependabot-${EVENT}-$(date +%s)",
               "card": {
                 "header": {
-                  "title": "${HEADER_EMOJI} ${HEADER_TITLE}",
+                  "title": "${HEADER_TITLE}",
                   "subtitle": "${SUBTITLE}",
                   "imageUrl": "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png",
                   "imageType": "CIRCLE"
                 },
                 "sections": [{
                   "widgets": [
-                    {"decoratedText": {"topLabel": "${DETAIL_LABEL}", "text": "${DETAIL_TEXT}", "wrapText": true}},
-                    {"decoratedText": {"topLabel": "${NEXT_LABEL}", "text": "${NEXT_TEXT}", "wrapText": true}},
+                    {"decoratedText": {"topLabel": "${STATUS_LABEL}", "text": "${STATUS_TEXT}", "wrapText": true}},
+                    {"decoratedText": {"topLabel": "PR Title", "text": "${PR_TITLE}", "wrapText": true}},
+                    {"decoratedText": {"topLabel": "Package(s)", "text": "${PKG_SUMMARY}", "wrapText": true}},
+                    {"decoratedText": {"topLabel": "Version", "text": "${VERSION_TEXT}"}},
+                    {"decoratedText": {"topLabel": "Update Type", "text": "${UPDATE_LABEL}"}},
+                    {"decoratedText": {"topLabel": "Ecosystem", "text": "${ECO_DISPLAY}"}}${CVSS_LINE},
                     {"buttonList": {"buttons": [
                       {"text": "${BUTTON_TEXT}", "onClick": {"openLink": {"url": "${PR_URL}"}}}
                     ]}}
@@ -177,7 +175,7 @@ jobs:
               }
             }]
           }
-          EOF
+          PAYLOAD_END
           curl -sS -X POST "$THREADED_URL" \
             -H "Content-Type: application/json; charset=UTF-8" \
             -d @payload.json
