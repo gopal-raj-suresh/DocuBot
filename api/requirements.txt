@@ -35,5 +35,5 @@ astroid>=3.0.0
 
 # Utilities
 aiofiles>=23.0.0
-aiosqlite>=0.20.0
+aiosqlite>=0.22.1
 tenacity>=8.2.3
