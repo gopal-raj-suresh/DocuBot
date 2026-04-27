@@ -5,6 +5,8 @@ on:
     types: [opened]
   pull_request:
     types: [closed]
+  push:
+    branches: [main]
 
 permissions:
   contents: read
@@ -14,21 +16,61 @@ jobs:
   notify:
     name: Post Dependabot event to Google Chat
     runs-on: ubuntu-latest
-    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    # Trigger conditions:
+    # - opened/closed events: only when the PR was authored by dependabot[bot]
+    # - push events: only when the head commit looks like a Dependabot squash
+    #   (commit message starts with chore(deps- which is our configured prefix)
+    if: |
+      (github.event_name != 'push' && github.event.pull_request.user.login == 'dependabot[bot]') ||
+      (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'chore(deps-'))
     steps:
-      - name: Fetch Dependabot metadata
-        id: meta
+      - name: Resolve PR for push event
+        id: pr_lookup
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMIT_SHA: ${{ github.event.head_commit.id }}
+        run: |
+          # Find the PR that produced this squash commit on main.
+          PR_JSON=$(gh api "repos/${{ github.repository }}/commits/${COMMIT_SHA}/pulls" 2>/dev/null | jq '[.[] | select(.user.login == "dependabot[bot]")] | .[0] // empty')
+          if [[ -z "$PR_JSON" || "$PR_JSON" == "null" ]]; then
+            echo "No Dependabot PR associated with this commit; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$(echo "$PR_JSON" | jq -r '.number')" >> "$GITHUB_OUTPUT"
+          echo "pr_url=$(echo "$PR_JSON" | jq -r '.html_url')" >> "$GITHUB_OUTPUT"
+          echo "pr_title=$(echo "$PR_JSON" | jq -r '.title')" >> "$GITHUB_OUTPUT"
+          echo "pr_head_ref=$(echo "$PR_JSON" | jq -r '.head.ref')" >> "$GITHUB_OUTPUT"
+
+      - name: Stop early if push had no Dependabot PR
+        if: github.event_name == 'push' && steps.pr_lookup.outputs.skip == 'true'
+        run: exit 0
+
+      - name: Fetch Dependabot metadata (PR events)
+        id: meta_pr
+        if: github.event_name != 'push'
         uses: dependabot/fetch-metadata@v2
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
 
+      - name: Fetch Dependabot metadata (push events)
+        id: meta_push
+        if: github.event_name == 'push' && steps.pr_lookup.outputs.skip != 'true'
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+          pr-number: ${{ steps.pr_lookup.outputs.pr_number }}
+
       - name: Classify event and update type
         id: classify
         env:
-          FM_UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
+          FM_UPDATE_TYPE: ${{ steps.meta_pr.outputs.update-type || steps.meta_push.outputs.update-type }}
+          PR_TITLE: ${{ github.event.pull_request.title || steps.pr_lookup.outputs.pr_title }}
           ACTION: ${{ github.event.action }}
           MERGED: ${{ github.event.pull_request.merged }}
+          GH_EVENT: ${{ github.event_name }}
         run: |
           UPDATE_TYPE="${FM_UPDATE_TYPE}"
           if [[ -z "$UPDATE_TYPE" || "$UPDATE_TYPE" == "null" ]]; then
@@ -42,19 +84,24 @@ jobs:
               UPDATE_TYPE="unknown"
             fi
           fi
+
           EVENT="skip"
-          if [[ "$ACTION" == "opened" ]]; then
+          if [[ "$GH_EVENT" == "pull_request_target" && "$ACTION" == "opened" ]]; then
             if [[ "$UPDATE_TYPE" == "version-update:semver-major" ]]; then EVENT="opened_major"
             else EVENT="opened_minor_patch"; fi
-          elif [[ "$ACTION" == "closed" && "$MERGED" == "true" ]]; then
+          elif [[ "$GH_EVENT" == "pull_request" && "$ACTION" == "closed" && "$MERGED" == "true" ]]; then
+            EVENT="merged"
+          elif [[ "$GH_EVENT" == "push" ]]; then
             EVENT="merged"
           fi
+
           case "$UPDATE_TYPE" in
             version-update:semver-patch) UPDATE_LABEL="patch update";;
             version-update:semver-minor) UPDATE_LABEL="minor update";;
             version-update:semver-major) UPDATE_LABEL="major update (may contain breaking changes)";;
             *) UPDATE_LABEL="update";;
           esac
+
           echo "event=$EVENT" >> "$GITHUB_OUTPUT"
           echo "update-type=$UPDATE_TYPE" >> "$GITHUB_OUTPUT"
           echo "update-label=$UPDATE_LABEL" >> "$GITHUB_OUTPUT"
@@ -65,18 +112,18 @@ jobs:
           WEBHOOK_URL: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
           EVENT: ${{ steps.classify.outputs.event }}
           UPDATE_LABEL: ${{ steps.classify.outputs.update-label }}
-          DEP_NAMES: ${{ steps.meta.outputs.dependency-names }}
-          ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
-          DIRECTORY: ${{ steps.meta.outputs.directory }}
-          PREVIOUS_VERSION: ${{ steps.meta.outputs.previous-version }}
-          NEW_VERSION: ${{ steps.meta.outputs.new-version }}
-          DEP_GROUP: ${{ steps.meta.outputs.dependency-group }}
-          CVSS: ${{ steps.meta.outputs.cvss || '0' }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
+          DEP_NAMES: ${{ steps.meta_pr.outputs.dependency-names || steps.meta_push.outputs.dependency-names }}
+          ECOSYSTEM: ${{ steps.meta_pr.outputs.package-ecosystem || steps.meta_push.outputs.package-ecosystem }}
+          DIRECTORY: ${{ steps.meta_pr.outputs.directory || steps.meta_push.outputs.directory }}
+          PREVIOUS_VERSION: ${{ steps.meta_pr.outputs.previous-version || steps.meta_push.outputs.previous-version }}
+          NEW_VERSION: ${{ steps.meta_pr.outputs.new-version || steps.meta_push.outputs.new-version }}
+          DEP_GROUP: ${{ steps.meta_pr.outputs.dependency-group || steps.meta_push.outputs.dependency-group }}
+          CVSS: ${{ steps.meta_pr.outputs.cvss || steps.meta_push.outputs.cvss || '0' }}
+          PR_URL: ${{ github.event.pull_request.html_url || steps.pr_lookup.outputs.pr_url }}
+          PR_NUMBER: ${{ github.event.pull_request.number || steps.pr_lookup.outputs.pr_number }}
+          PR_TITLE: ${{ github.event.pull_request.title || steps.pr_lookup.outputs.pr_title }}
           REPO: ${{ github.repository }}
-          MERGED_BY: ${{ github.event.pull_request.merged_by.login }}
+          MERGED_BY: ${{ github.event.pull_request.merged_by.login || github.event.head_commit.author.username || 'app/github-actions' }}
         run: |
           case "$ECOSYSTEM" in
             npm_and_yarn) ECO_LABEL="npm";;
