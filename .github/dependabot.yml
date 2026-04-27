@@ -26,7 +26,7 @@ updates:
   - package-ecosystem: npm
     directory: /ui
     schedule:
-      interval: daily
+      interval: weekly
       day: monday
       time: "06:00"
       timezone: "America/Chicago"
