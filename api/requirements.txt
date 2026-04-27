@@ -34,6 +34,6 @@ mcp>=0.9.0
 astroid>=3.0.0
 
 # Utilities
-aiofiles>=23.0.0
+aiofiles>=25.1.0
 aiosqlite>=0.22.1
 tenacity>=8.2.3
