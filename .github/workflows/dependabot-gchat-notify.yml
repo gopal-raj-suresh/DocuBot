@@ -1,183 +1,176 @@
-name: Notify Google Chat on Dependabot Events
-
+name: Notify Google Chat on Dependabot Events
+
 on:
   pull_request_target:
     types: [opened]
   pull_request:
-    types: [closed]
-
-permissions:
-  contents: read
-  pull-requests: read
-
-jobs:
-  notify:
-    name: Post Dependabot event to Google Chat
-    runs-on: ubuntu-latest
-    if: github.event.pull_request.user.login == 'dependabot[bot]'
-    steps:
-      - name: Fetch Dependabot metadata
-        id: meta
-        uses: dependabot/fetch-metadata@v2
-        with:
-          github-token: "${{ secrets.GITHUB_TOKEN }}"
-
-      - name: Classify event and update type
-        id: classify
-        env:
-          FM_UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          ACTION: ${{ github.event.action }}
-          MERGED: ${{ github.event.pull_request.merged }}
-        run: |
-          UPDATE_TYPE="${FM_UPDATE_TYPE}"
-
-          if [[ -z "$UPDATE_TYPE" || "$UPDATE_TYPE" == "null" ]]; then
-            if [[ "$PR_TITLE" =~ ([0-9]+)\.([0-9]+)\.([0-9]+).*to.*([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
-              OLD_MAJOR="${BASH_REMATCH[1]}"; OLD_MINOR="${BASH_REMATCH[2]}"
-              NEW_MAJOR="${BASH_REMATCH[4]}"; NEW_MINOR="${BASH_REMATCH[5]}"
-              if [[ "$OLD_MAJOR" != "$NEW_MAJOR" ]]; then
-                UPDATE_TYPE="version-update:semver-major"
-              elif [[ "$OLD_MINOR" != "$NEW_MINOR" ]]; then
-                UPDATE_TYPE="version-update:semver-minor"
-              else
-                UPDATE_TYPE="version-update:semver-patch"
-              fi
-            else
-              UPDATE_TYPE="unknown"
-            fi
-          fi
-
-          EVENT="skip"
-          if [[ "$ACTION" == "opened" ]]; then
-            if [[ "$UPDATE_TYPE" == "version-update:semver-major" ]]; then
-              EVENT="opened_major"
-            else
-              EVENT="opened_minor_patch"
-            fi
-          elif [[ "$ACTION" == "closed" && "$MERGED" == "true" ]]; then
-            EVENT="merged"
-          fi
-
-          case "$UPDATE_TYPE" in
-            version-update:semver-patch) UPDATE_LABEL="patch update";;
-            version-update:semver-minor) UPDATE_LABEL="minor update";;
-            version-update:semver-major) UPDATE_LABEL="major update (may contain breaking changes)";;
-            *) UPDATE_LABEL="update";;
-          esac
-
-          echo "event=$EVENT" >> "$GITHUB_OUTPUT"
-          echo "update-type=$UPDATE_TYPE" >> "$GITHUB_OUTPUT"
-          echo "update-label=$UPDATE_LABEL" >> "$GITHUB_OUTPUT"
-
-      - name: Send Google Chat card (threaded per repo)
-        if: steps.classify.outputs.event != 'skip'
-        env:
-          WEBHOOK_URL: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
-          EVENT: ${{ steps.classify.outputs.event }}
-          UPDATE_LABEL: ${{ steps.classify.outputs.update-label }}
-          DEP_NAMES: ${{ steps.meta.outputs.dependency-names }}
-          ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
-          DIRECTORY: ${{ steps.meta.outputs.directory }}
-          PREVIOUS_VERSION: ${{ steps.meta.outputs.previous-version }}
-          NEW_VERSION: ${{ steps.meta.outputs.new-version }}
-          DEP_GROUP: ${{ steps.meta.outputs.dependency-group }}
-          CVSS: ${{ steps.meta.outputs.cvss || '0' }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          REPO: ${{ github.repository }}
-          MERGED_BY: ${{ github.event.pull_request.merged_by.login }}
-        run: |
-          case "$ECOSYSTEM" in
-            npm_and_yarn) ECO_LABEL="npm";;
-            pip) ECO_LABEL="pip";;
-            github_actions) ECO_LABEL="GitHub Actions";;
-            docker) ECO_LABEL="Docker";;
-            *) ECO_LABEL="$ECOSYSTEM";;
-          esac
-
-          ECO_DISPLAY="${ECO_LABEL}"
-          if [[ -n "$DIRECTORY" && "$DIRECTORY" != "/" ]]; then
-            ECO_DISPLAY="${ECO_LABEL} (${DIRECTORY})"
-          fi
-
-          if [[ -n "$PREVIOUS_VERSION" && -n "$NEW_VERSION" ]]; then
-            VERSION_TEXT="${PREVIOUS_VERSION} -> ${NEW_VERSION}"
-          else
-            VERSION_TEXT="see PR for versions"
-          fi
-
-          if [[ -n "$DEP_GROUP" ]]; then
-            PKG_COUNT=$(echo "$DEP_NAMES" | tr ',' '\n' | wc -l | tr -d ' ')
-            PKG_SUMMARY="${DEP_GROUP} group (${PKG_COUNT} packages)"
-          else
-            PKG_SUMMARY="${DEP_NAMES}"
-          fi
-
-          case "$EVENT" in
-            opened_minor_patch)
-              HEADER_TITLE="✅ Safe update - auto-merging after CI"
-              STATUS_LABEL="Action Required"
-              STATUS_TEXT="No action needed. Auto-merge enabled; will merge once CI passes."
-              BUTTON_TEXT="View PR"
-              ;;
-            opened_major)
-              HEADER_TITLE="⚠️ MAJOR version bump - human review required"
-              STATUS_LABEL="Action Required"
-              STATUS_TEXT="This is a MAJOR version upgrade and may contain breaking changes. Please review and merge manually if safe."
-              BUTTON_TEXT="Review PR"
-              ;;
-            merged)
-              HEADER_TITLE="🚀 Merged into main"
-              STATUS_LABEL="Merged By"
-              if [[ -n "$MERGED_BY" && "$MERGED_BY" != "null" ]]; then
-                STATUS_TEXT="${MERGED_BY}"
-              else
-                STATUS_TEXT="dependabot[bot] (auto-merge)"
-              fi
-              BUTTON_TEXT="View PR"
-              ;;
-          esac
-
-          SUBTITLE="${REPO} - PR #${PR_NUMBER}"
-
-          CVSS_LINE=""
-          if [[ -n "$CVSS" && "$CVSS" != "0" && "$CVSS" != "0.0" ]]; then
-            CVSS_LINE=",{\"decoratedText\": {\"topLabel\": \"CVSS Score (Common Vulnerability Scoring System, 0 to 10 scale)\", \"text\": \"${CVSS}\"}}"
-          fi
-
-          THREAD_KEY=$(echo "${REPO}" | tr '[:upper:]' '[:lower:]' | tr '/' '-')
-          THREADED_URL="${WEBHOOK_URL}&threadKey=${THREAD_KEY}&messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
-
-          cat > payload.json <<PAYLOAD_END
-          {
-            "cardsV2": [{
-              "cardId": "dependabot-${EVENT}-$(date +%s)",
-              "card": {
-                "header": {
-                  "title": "${HEADER_TITLE}",
-                  "subtitle": "${SUBTITLE}",
-                  "imageUrl": "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png",
-                  "imageType": "CIRCLE"
-                },
-                "sections": [{
-                  "widgets": [
-                    {"decoratedText": {"topLabel": "${STATUS_LABEL}", "text": "${STATUS_TEXT}", "wrapText": true}},
-                    {"decoratedText": {"topLabel": "PR Title", "text": "${PR_TITLE}", "wrapText": true}},
-                    {"decoratedText": {"topLabel": "Package(s)", "text": "${PKG_SUMMARY}", "wrapText": true}},
-                    {"decoratedText": {"topLabel": "Version", "text": "${VERSION_TEXT}"}},
-                    {"decoratedText": {"topLabel": "Update Type", "text": "${UPDATE_LABEL}"}},
-                    {"decoratedText": {"topLabel": "Ecosystem", "text": "${ECO_DISPLAY}"}}${CVSS_LINE},
-                    {"buttonList": {"buttons": [
-                      {"text": "${BUTTON_TEXT}", "onClick": {"openLink": {"url": "${PR_URL}"}}}
-                    ]}}
-                  ]
-                }]
-              }
-            }]
-          }
-          PAYLOAD_END
-          curl -sS -X POST "$THREADED_URL" \
-            -H "Content-Type: application/json; charset=UTF-8" \
-            -d @payload.json
+    types: [closed]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  notify:
+    name: Post Dependabot event to Google Chat
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Classify event and update type
+        id: classify
+        env:
+          FM_UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          ACTION: ${{ github.event.action }}
+          MERGED: ${{ github.event.pull_request.merged }}
+        run: |
+          UPDATE_TYPE="${FM_UPDATE_TYPE}"
+          if [[ -z "$UPDATE_TYPE" || "$UPDATE_TYPE" == "null" ]]; then
+            if [[ "$PR_TITLE" =~ ([0-9]+)\.([0-9]+)\.([0-9]+).*to.*([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+              OM="${BASH_REMATCH[1]}"; Om="${BASH_REMATCH[2]}"
+              NM="${BASH_REMATCH[4]}"; Nm="${BASH_REMATCH[5]}"
+              if [[ "$OM" != "$NM" ]]; then UPDATE_TYPE="version-update:semver-major"
+              elif [[ "$Om" != "$Nm" ]]; then UPDATE_TYPE="version-update:semver-minor"
+              else UPDATE_TYPE="version-update:semver-patch"; fi
+            else
+              UPDATE_TYPE="unknown"
+            fi
+          fi
+          EVENT="skip"
+          if [[ "$ACTION" == "opened" ]]; then
+            if [[ "$UPDATE_TYPE" == "version-update:semver-major" ]]; then EVENT="opened_major"
+            else EVENT="opened_minor_patch"; fi
+          elif [[ "$ACTION" == "closed" && "$MERGED" == "true" ]]; then
+            EVENT="merged"
+          fi
+          case "$UPDATE_TYPE" in
+            version-update:semver-patch) UPDATE_LABEL="patch update";;
+            version-update:semver-minor) UPDATE_LABEL="minor update";;
+            version-update:semver-major) UPDATE_LABEL="major update (may contain breaking changes)";;
+            *) UPDATE_LABEL="update";;
+          esac
+          echo "event=$EVENT" >> "$GITHUB_OUTPUT"
+          echo "update-type=$UPDATE_TYPE" >> "$GITHUB_OUTPUT"
+          echo "update-label=$UPDATE_LABEL" >> "$GITHUB_OUTPUT"
+
+      - name: Send Google Chat card (threaded per repo)
+        if: steps.classify.outputs.event != 'skip'
+        env:
+          WEBHOOK_URL: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
+          EVENT: ${{ steps.classify.outputs.event }}
+          UPDATE_LABEL: ${{ steps.classify.outputs.update-label }}
+          DEP_NAMES: ${{ steps.meta.outputs.dependency-names }}
+          ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
+          DIRECTORY: ${{ steps.meta.outputs.directory }}
+          PREVIOUS_VERSION: ${{ steps.meta.outputs.previous-version }}
+          NEW_VERSION: ${{ steps.meta.outputs.new-version }}
+          DEP_GROUP: ${{ steps.meta.outputs.dependency-group }}
+          CVSS: ${{ steps.meta.outputs.cvss || '0' }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          REPO: ${{ github.repository }}
+          MERGED_BY: ${{ github.event.pull_request.merged_by.login }}
+        run: |
+          case "$ECOSYSTEM" in
+            npm_and_yarn) ECO_LABEL="npm";;
+            pip) ECO_LABEL="pip";;
+            github_actions) ECO_LABEL="GitHub Actions";;
+            docker) ECO_LABEL="Docker";;
+            *) ECO_LABEL="$ECOSYSTEM";;
+          esac
+          ECO_DISPLAY="$ECO_LABEL"
+          if [[ -n "$DIRECTORY" && "$DIRECTORY" != "/" ]]; then
+            ECO_DISPLAY="$ECO_LABEL ($DIRECTORY)"
+          fi
+          if [[ -n "$PREVIOUS_VERSION" && -n "$NEW_VERSION" ]]; then
+            VERSION_TEXT="$PREVIOUS_VERSION -> $NEW_VERSION"
+          else
+            VERSION_TEXT="see PR for versions"
+          fi
+          if [[ -n "$DEP_GROUP" ]]; then
+            PKG_COUNT=$(echo "$DEP_NAMES" | tr ',' '\n' | wc -l | tr -d ' ')
+            PKG_SUMMARY="$DEP_GROUP group ($PKG_COUNT packages)"
+          else
+            PKG_SUMMARY="$DEP_NAMES"
+          fi
+          case "$EVENT" in
+            opened_minor_patch)
+              HEADER_TITLE="Safe update - auto-merging after CI"
+              STATUS_LABEL="Action Required"
+              STATUS_TEXT="No action needed. Auto-merge enabled; will merge once CI passes."
+              BUTTON_TEXT="View PR"
+              ;;
+            opened_major)
+              HEADER_TITLE="MAJOR version bump - human review required"
+              STATUS_LABEL="Action Required"
+              STATUS_TEXT="This is a MAJOR version upgrade and may contain breaking changes. Please review and merge manually if safe."
+              BUTTON_TEXT="Review PR"
+              ;;
+            merged)
+              HEADER_TITLE="Merged into main"
+              STATUS_LABEL="Merged By"
+              if [[ -n "$MERGED_BY" && "$MERGED_BY" != "null" ]]; then
+                STATUS_TEXT="$MERGED_BY"
+              else
+                STATUS_TEXT="dependabot[bot] (auto-merge)"
+              fi
+              BUTTON_TEXT="View PR"
+              ;;
+          esac
+          SUBTITLE="$REPO - PR #$PR_NUMBER"
+          CARD_ID="dependabot-$EVENT-$(date +%s)"
+          THREAD_KEY=$(echo "$REPO" | tr '[:upper:]' '[:lower:]' | tr '/' '-')
+          THREADED_URL="${WEBHOOK_URL}&threadKey=${THREAD_KEY}&messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
+
+          jq -n \
+            --arg cardId "$CARD_ID" \
+            --arg title "$HEADER_TITLE" \
+            --arg subtitle "$SUBTITLE" \
+            --arg statusLabel "$STATUS_LABEL" \
+            --arg statusText "$STATUS_TEXT" \
+            --arg prTitle "$PR_TITLE" \
+            --arg pkgSummary "$PKG_SUMMARY" \
+            --arg versionText "$VERSION_TEXT" \
+            --arg updateLabel "$UPDATE_LABEL" \
+            --arg ecoDisplay "$ECO_DISPLAY" \
+            --arg buttonText "$BUTTON_TEXT" \
+            --arg prUrl "$PR_URL" \
+            --arg cvss "$CVSS" \
+            '{
+              cardsV2: [{
+                cardId: $cardId,
+                card: {
+                  header: {
+                    title: $title,
+                    subtitle: $subtitle,
+                    imageUrl: "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png",
+                    imageType: "CIRCLE"
+                  },
+                  sections: [{
+                    widgets: (
+                      [
+                        {decoratedText: {topLabel: $statusLabel, text: $statusText, wrapText: true}},
+                        {decoratedText: {topLabel: "PR Title", text: $prTitle, wrapText: true}},
+                        {decoratedText: {topLabel: "Package(s)", text: $pkgSummary, wrapText: true}},
+                        {decoratedText: {topLabel: "Version", text: $versionText}},
+                        {decoratedText: {topLabel: "Update Type", text: $updateLabel}},
+                        {decoratedText: {topLabel: "Ecosystem", text: $ecoDisplay}}
+                      ]
+                      + (if ($cvss | IN("0","0.0","")) then [] else [{decoratedText: {topLabel: "CVSS Score (Common Vulnerability Scoring System, 0 to 10 scale)", text: $cvss}}] end)
+                      + [{buttonList: {buttons: [{text: $buttonText, onClick: {openLink: {url: $prUrl}}}]}}]
+                    )
+                  }]
+                }
+              }]
+            }' > payload.json
+
+          curl -sS -X POST "$THREADED_URL" \
+            -H "Content-Type: application/json; charset=UTF-8" \
+            -d @payload.json
