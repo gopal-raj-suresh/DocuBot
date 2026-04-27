@@ -31,7 +31,7 @@ PyGithub>=2.9.1
 mcp>=0.9.0
 
 # Code Analysis
-astroid>=3.0.0
+astroid>=4.1.2
 
 # Utilities
 aiofiles>=25.1.0
