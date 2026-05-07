@@ -15,8 +15,8 @@
     "highlight.js": "^11.7.0",
     "lucide-react": "^1.14.0",
     "mermaid": "^11.14.0",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.0",
     "remark-gfm": "^4.0.1"
@@ -32,7 +32,7 @@
     "eslint-plugin-react-refresh": "^0.5.2",
     "postcss": "^8.5.14",
     "tailwindcss": "^4.2.4",
-    "vite": "^8.0.10"
+    "vite": "^8.0.11"
   },
   "overrides": {
     "shell-quote": "^1.8.1",
