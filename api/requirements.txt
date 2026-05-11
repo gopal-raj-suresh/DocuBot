@@ -2,7 +2,7 @@
 fastapi>=0.136.1
 uvicorn[standard]>=0.46.0
 python-multipart>=0.0.28
-sse-starlette>=1.6.5
+sse-starlette>=3.4.3
 
 # Environment & Config
 python-dotenv>=1.2.2
