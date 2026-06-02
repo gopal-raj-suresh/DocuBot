@@ -17,7 +17,7 @@ langgraph-checkpoint-sqlite>=3.1.0
 langchain-community>=0.4.1
 
 # LLM APIs
-openai>=2.34.0
+openai>=2.40.0
 httpx>=0.28.1
 requests>=2.33.1
 
