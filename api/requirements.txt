@@ -14,7 +14,7 @@ langchain>=0.1.0
 langchain-openai>=1.2.2
 langgraph>=0.0.20
 langgraph-checkpoint-sqlite>=3.1.0
-langchain-community>=0.4.1
+langchain-community>=0.4.2
 
 # LLM APIs
 openai>=2.40.0
