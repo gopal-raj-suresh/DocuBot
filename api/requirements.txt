@@ -19,7 +19,7 @@ langchain-community>=0.4.2
 # LLM APIs
 openai>=2.40.0
 httpx>=0.28.1
-requests>=2.33.1
+requests>=2.34.2
 
 # Git Operations
 gitpython>=3.1.40
