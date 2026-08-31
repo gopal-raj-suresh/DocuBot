@@ -51,14 +51,14 @@ jobs:
       - name: Fetch Dependabot metadata (PR events)
         id: meta_pr
         if: github.event_name != 'push'
-        uses: dependabot/fetch-metadata@v2
+        uses: dependabot/fetch-metadata@v3
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
 
       - name: Fetch Dependabot metadata (push events)
         id: meta_push
         if: github.event_name == 'push' && steps.pr_lookup.outputs.skip != 'true'
-        uses: dependabot/fetch-metadata@v2
+        uses: dependabot/fetch-metadata@v3
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
           pr-number: ${{ steps.pr_lookup.outputs.pr_number }}
